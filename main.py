@@ -60,14 +60,18 @@ router_system_prompt = """คุณคือตัววิเคราะห์
 จงวิเคราะห์ข้อความของผู้ใช้ แล้วตอบกลับเป็น JSON เท่านั้น (ห้ามใส่ Markdown Codeblock)
 
 การตัดสินใจเลือก action:
-1. "get_stock_price": เมื่อผู้ใช้ถามราคาหุ้น ตลาดหุ้น หรือขอคำแนะนำ/วิเคราะห์การลงทุนในหุ้นตัวนั้นๆ (ให้ดึงสัญลักษณ์ ticker เช่น AAPL, TSLA, PTT.BK)
-2. "get_weather": เมื่อผู้ใช้ต้องการเช็คสภาพอากาศ หรือถามคำถามที่ต้องใช้สภาพอากาศปัจจุบันประกอบการตัดสินใจ (เช่น ออกไปวิ่งได้ไหม, ต้องพกร่มไหม) โดยให้ระบุชื่อเมือง ถ้าเป็นภาษาไทยให้เปลี่ยนเป็นภาษาอังกฤษ (เช่น "กรุงเทพ" เป็น "Bangkok", "โตเกียว" เป็น "Tokyo")
-3. "chat": เมื่อเป็นการชวนคุยทั่วไปทุกอย่าง แสดงความคิดเห็น รำพึงรำพัน สนทนาโต้ตอบ คำถามกำกวม (เช่น "ที่นี่อากาศเป็นยังไง") หรือเปรียบปรยโดยไม่ต้องการข้อมูล API ณ วินาทีนั้นจริงๆ (เช่น "วันนี้กรุงเทพอากาศดีนะ ไม่เห็นมีฝนตามพยากรณ์เลย")
+1. "get_stock_price": เมื่อผู้ใช้ถามคำถามเพื่อขอทราบราคาหุ้น ตลาดหุ้นจริงๆ หรือขอคำแนะนำ/วิเคราะห์การลงทุนในหุ้นตัวนั้นๆ (ให้ดึงสัญลักษณ์ ticker เช่น AAPL, TSLA, PTT.BK)
+2. "get_weather": เมื่อผู้ใช้ถามคำถามเพื่อขอทราบอุณหภูมิ/พยากรณ์อากาศจริงๆ หรือถามคำถามที่ต้องใช้สภาพอากาศปัจจุบันประกอบการตัดสินใจ (เช่น ออกไปวิ่งได้ไหม, ต้องพกร่มไหม) โดยให้ระบุชื่อเมือง ถ้าเป็นภาษาไทยให้เปลี่ยนเป็นภาษาอังกฤษ (เช่น "กรุงเทพ" เป็น "Bangkok", "โตเกียว" เป็น "Tokyo")
+3. "chat": คำถามหรือข้อความอื่นๆทั้งหมด คำถามกำกวม (เช่น "ที่นี่อากาศเป็นยังไง") หรือเปรียบปรยโดยไม่ต้องการข้อมูล API ข้างต้น (เช่น "วันนี้กรุงเทพอากาศดีนะ ไม่เห็นมีฝนตามพยากรณ์เลย")
+
+หลักการกำหนด "need_analysis" (true/false) สำหรับ get_stock_price และ get_weather:
+- true: เมื่อผู้ใช้ถามคำถามเชิงวิเคราะห์ ขอคำแนะนำ Decision-making หรือมีคำถามต่อยอด (เช่น "อากาศกรุงเทพตอนนี้เป็นยังไง ออกไปซื้อของได้ไหม", "หุ้น PTT ราคานี้ควรซื้อไหม")
+- false: เมื่อผู้ใช้ต้องการทราบเพียง "ข้อมูลตัวเลข/สภาพอากาศตรงๆ" (เช่น "ราคาหุ้น AAPL เท่าไหร่", "ตอนนี้สภาพอากาศกรุงเทพเป็นยังไง")
 
 รูปแบบโครงสร้าง JSON:
 - ถ้า get_stock_price: {"action": "get_stock_price", "ticker": "สัญลักษณ์หุ้น"}
 - ถ้า get_weather: {"action": "get_weather", "city": "ชื่อเมือง"}
-- ถ้า chat: {"action": "chat", "reply": "คำตอบสนทนาทั่วไป"}
+- ถ้า chat: {"action": "chat"}
 """
 
 # Prompt วิเคราะห์ข้อมูลจาก API ร่วมกับคำถามผู้ใช้
@@ -76,6 +80,8 @@ analyze_system_prompt = """คุณคือผู้ช่วย AI อัจ�
 - หากผู้ใช้ถามว่าเหมาะจะออกไปทำกิจกรรมไหม (เช่น วิ่ง, ออกกำลังกาย) ให้วิเคราะห์จากอุณหภูมิและสภาพอากาศที่ได้
 - หากผู้ใช้ถามเรื่องแนวโน้มการลงทุน ให้ระบุราคาปัจจุบันและให้คำแนะนำหลักการลงทุนเบื้องต้นแบบเป็นกลาง
 - หากข้อมูลจริงที่ได้จากระบบ API ตอบคำถามครบถ้วนแล้ว คุณไม่จำเป็นต้องวิเคราะห์ต่อ"""
+
+
 
 while True:
     user_input = input("User: ")
@@ -118,21 +124,44 @@ while True:
                 print(f"ตรวจพบ Parameter 'city': {city}")
                 api_result = get_weather(city)
 
-            # ส่งข้อมูล API กลับให้ LLM วิเคราะห์และสรุปคำตอบให้ผู้ใช้
-            print("กำลังให้ LLM วิเคราะห์คำตอบจากข้อมูล API")
-            analyze_res = client.chat.completions.create(
+            # ตรวจสอบว่าผู้ใช้ต้องการการวิเคราะห์ต่อยอดหรือไม่
+            need_analysis = data.get("need_analysis", False)
+
+            # ตรวจสอบว่าต้องส่งเข้า analyze_system_prompt หรือไม่
+            if need_analysis:
+                # กรณีต้องการคำแนะนำ/วิเคราะห์ต่อยอด -> ส่งหา LLM ร่วมกับ analyze_system_prompt
+                print("คำถามต้องการการวิเคราะห์ต่อยอด -> กำลังส่งให้ LLM ประมวลผล")
+                try:
+                    analyze_res = client.chat.completions.create(
+                        model="openrouter/free", # เปลี่ยนเป็นโมเดลระบุรุ่นที่เร็วขึ้น
+                        messages=[
+                            {"role": "system", "content": analyze_system_prompt},
+                            {"role": "user", "content": f"คำถามผู้ใช้: {user_input}\nข้อมูลจริงจาก API: {api_result}"}
+                        ],
+                        timeout=15 # กำหนด Timeout กันค้าง
+                    )
+                    final_reply = analyze_res.choices[0].message.content
+                    print(f"AI: {final_reply}")
+                except Exception as e:
+                    print(f"ไม่สามารถวิเคราะห์ต่อยอดได้เนื่องจาก: {e}")
+                    print(f"AI (ข้อมูลสำรอง): {api_result}")
+            else:
+                # กรณีแค่ต้องการข้อมูลดิบตรงๆ -> พิมพ์ผลลัพธ์ API ได้เลยโดยข้าม analyze_system_prompt
+                print("คำถามต้องการแค่ข้อมูลตรงๆ -> ข้ามการวิเคราะห์")
+                print(f"AI: {api_result}")
+
+        else:
+            # กรณี action == "chat" หรือ action อื่นๆ ให้ส่งหา LLM เพื่อแชทสนทนาตามปกติ
+            print("ไม่ได้เรียกใช้ API -> ส่งตอบแชททั่วไป")
+            chat_res = client.chat.completions.create(
                 model="openrouter/free",
                 messages=[
-                    {"role": "system", "content": analyze_system_prompt},
-                    {"role": "user", "content": f"คำถามผู้ใช้: {user_input}ข้อมูลจริงจาก API: {api_result}"}
+                    {"role": "system", "content": "คุณคือผู้ช่วย AI อัจฉริยะ ตอบคำถามผู้ใช้อย่างสุภาพและเป็นธรรมชาติ"},
+                    {"role": "user", "content": user_input}
                 ]
             )
-            final_reply = analyze_res.choices[0].message.content
+            final_reply = chat_res.choices[0].message.content
             print(f"AI: {final_reply}")
-
-        elif action == "chat":
-            reply = data.get("reply")
-            print(f"AI: {reply}")
 
     except json.JSONDecodeError as e:
         print(f"JSONDecodeError: อ่าน JSON ไม่สำเร็จ - {e}")
