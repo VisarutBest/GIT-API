@@ -81,7 +81,9 @@ analyze_system_prompt = """คุณคือผู้ช่วย AI อัจ�
 - หากผู้ใช้ถามเรื่องแนวโน้มการลงทุน ให้ระบุราคาปัจจุบันและให้คำแนะนำหลักการลงทุนเบื้องต้นแบบเป็นกลาง
 - หากข้อมูลจริงที่ได้จากระบบ API ตอบคำถามครบถ้วนแล้ว คุณไม่จำเป็นต้องวิเคราะห์ต่อ"""
 
-
+# ประวัติการสนทนา
+messages_history = []
+MAX_HISTORY = 10  # เก็บย้อนหลังสูงสุด 10 ข้อความ (5 คู่ สนทนา) เพื่อควบคุม Token
 
 while True:
     user_input = input("User: ")
@@ -90,10 +92,18 @@ while True:
         print("Exit")
         break
 
+    if user_input.strip().lower() in ["clear", "clear history", "ล้างประวัติ"]:
+        messages_history.clear()
+        print("ระบบ: ล้างประวัติการสนทนาเรียบร้อยแล้ว")
+        continue
+
     if not user_input.strip():
         continue
 
     print(f"กำลังส่งคำถามไปยัง LLM เพื่อวิเคราะห์")
+
+    # รวม System Prompt + ประวัติการสนทนา + ข้อความปัจจุบันส่งไปวิเคราะห์ Intent
+    router_messages = [{"role": "system", "content": router_system_prompt}] + messages_history[-MAX_HISTORY:] + [{"role": "user", "content": user_input}]
 
     # ส่งคำถามให้ LLM วิเคราะห์ Intent
     res = client.chat.completions.create(
@@ -112,6 +122,8 @@ while True:
         data = json.loads(raw_response)
         action = data.get("action")
         print(f"Action ที่ถอดได้จาก JSON: '{action}'")
+
+        final_reply = ""
 
         # ตรวจสอบเงื่อนไขแล้วเรียกใช้ฟังก์ชันตามที่ LLM ระบุ
         if action in ["get_stock_price", "get_weather"]:
@@ -132,36 +144,47 @@ while True:
                 # กรณีต้องการคำแนะนำ/วิเคราะห์ต่อยอด -> ส่งหา LLM ร่วมกับ analyze_system_prompt
                 print("คำถามต้องการการวิเคราะห์ต่อยอด -> กำลังส่งให้ LLM ประมวลผล")
                 try:
+                    # ส่งประวัติแชทร่วมกับการวิเคราะห์ข้อมูล API
+                    analysis_messages = (
+                        [{"role": "system", "content": analyze_system_prompt}]
+                        + messages_history[-MAX_HISTORY:]
+                        + [{"role": "user", "content": f"คำถามผู้ใช้: {user_input}\nข้อมูลจริงจาก API: {api_result}"}]
+                    )
                     analyze_res = client.chat.completions.create(
-                        model="openrouter/free", # เปลี่ยนเป็นโมเดลระบุรุ่นที่เร็วขึ้น
-                        messages=[
-                            {"role": "system", "content": analyze_system_prompt},
-                            {"role": "user", "content": f"คำถามผู้ใช้: {user_input}\nข้อมูลจริงจาก API: {api_result}"}
-                        ],
-                        timeout=15 # กำหนด Timeout กันค้าง
+                        model="openrouter/free",
+                        messages=analysis_messages,
+                        timeout=15
                     )
                     final_reply = analyze_res.choices[0].message.content
                     print(f"AI: {final_reply}")
                 except Exception as e:
                     print(f"ไม่สามารถวิเคราะห์ต่อยอดได้เนื่องจาก: {e}")
+                    final_reply = api_result
                     print(f"AI (ข้อมูลสำรอง): {api_result}")
             else:
                 # กรณีแค่ต้องการข้อมูลดิบตรงๆ -> พิมพ์ผลลัพธ์ API ได้เลยโดยข้าม analyze_system_prompt
                 print("คำถามต้องการแค่ข้อมูลตรงๆ -> ข้ามการวิเคราะห์")
+                final_reply = api_result
                 print(f"AI: {api_result}")
 
         else:
             # กรณี action == "chat" หรือ action อื่นๆ ให้ส่งหา LLM เพื่อแชทสนทนาตามปกติ
             print("ไม่ได้เรียกใช้ API -> ส่งตอบแชททั่วไป")
+            chat_messages = (
+                [{"role": "system", "content": "คุณคือผู้ช่วย AI อัจฉริยะ ตอบคำถามผู้ใช้อย่างสุภาพและเป็นธรรมชาติ"}]
+                + messages_history[-MAX_HISTORY:]
+                + [{"role": "user", "content": user_input}]
+            )
             chat_res = client.chat.completions.create(
                 model="openrouter/free",
-                messages=[
-                    {"role": "system", "content": "คุณคือผู้ช่วย AI อัจฉริยะ ตอบคำถามผู้ใช้อย่างสุภาพและเป็นธรรมชาติ"},
-                    {"role": "user", "content": user_input}
-                ]
+                messages=chat_messages
             )
             final_reply = chat_res.choices[0].message.content
             print(f"AI: {final_reply}")
+
+        # อัปเดตประวัติการสนทนา
+        messages_history.append({"role": "user", "content": user_input})
+        messages_history.append({"role": "assistant", "content": final_reply})
 
     except json.JSONDecodeError as e:
         print(f"JSONDecodeError: อ่าน JSON ไม่สำเร็จ - {e}")
