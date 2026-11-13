@@ -15,18 +15,28 @@ client = OpenAI(
 )
 
 # ฟังก์ชันสำหรับดึงราคาหุ้น
-def get_stock_price(ticker):
-    print(f"กำลังเรียกใช้ get_stock_price() ด้วย Ticker: '{ticker}'")
-    try:
-        stock = yf.Ticker(ticker)
-        price = stock.info['currentPrice']
-        if price:
-            print(f"ดึงราคาสำเร็จ: {price}")
-            return f"ราคาหุ้น {ticker.upper()} ล่าสุดคือ {price:.2f}"
-        print(f"ไม่พบราคาหุ้นใน info")
-        return f"ไม่พบข้อมูลราคาหุ้น {ticker}"
-    except Exception as e:
-        return f"ไม่สามารถดึงข้อมูลหุ้น {ticker} ได้"
+def get_stock_price(tickers):
+    # ป้องกันกรณี LLM ส่งมาเป็น String เผื่อหลุดจาก Prompt
+    if isinstance(tickers, str):
+        tickers = [tickers]
+        
+    print(f"กำลังเรียกใช้ get_stock_price() ด้วย Tickers: {tickers}")
+    results = []
+    
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            price = stock.info.get('currentPrice')
+            if price:
+                print(f"ดึงราคา {ticker} สำเร็จ: {price}")
+                results.append(f"- ราคาหุ้น {ticker.upper()} ล่าสุดคือ {price:.2f}")
+            else:
+                print(f"ไม่พบราคาหุ้น {ticker} ใน info")
+                results.append(f"- ไม่พบข้อมูลราคาหุ้น {ticker.upper()}")
+        except Exception as e:
+            results.append(f"- ไม่สามารถดึงข้อมูลหุ้น {ticker.upper()} ได้ ({e})")
+            
+    return "\n".join(results)
 
 # ฟังก์ชันสำหรับดึงสภาพอากาศ
 def get_weather(city):
@@ -60,7 +70,7 @@ router_system_prompt = """คุณคือตัววิเคราะห์
 จงวิเคราะห์ข้อความของผู้ใช้ แล้วตอบกลับเป็น JSON เท่านั้น (ห้ามใส่ Markdown Codeblock)
 
 การตัดสินใจเลือก action:
-1. "get_stock_price": เมื่อผู้ใช้ถามคำถามเพื่อขอทราบราคาหุ้น ตลาดหุ้นจริงๆ หรือขอคำแนะนำ/วิเคราะห์การลงทุนในหุ้นตัวนั้นๆ (ให้ดึงสัญลักษณ์ ticker เช่น AAPL, TSLA, PTT.BK)
+1. "get_stock_price": เมื่อผู้ใช้ถามคำถามเพื่อขอทราบราคาหุ้น ตลาดหุ้นจริงๆ หรือขอคำแนะนำ/วิเคราะห์/เปรียบเทียบการลงทุนในหุ้น 1 ตัวหรือหลายตัวพร้อมกัน (ให้ดึงสัญลักษณ์ ticker ทั้งหมดใส่ใน list เช่น ["AAPL"], ["AAPL", "TSLA", "PTT.BK"])
 2. "get_weather": เมื่อผู้ใช้ถามคำถามเพื่อขอทราบอุณหภูมิ/พยากรณ์อากาศจริงๆ หรือถามคำถามที่ต้องใช้สภาพอากาศปัจจุบันประกอบการตัดสินใจ (เช่น ออกไปวิ่งได้ไหม, ต้องพกร่มไหม) โดยให้ระบุชื่อเมือง ถ้าเป็นภาษาไทยให้เปลี่ยนเป็นภาษาอังกฤษ (เช่น "กรุงเทพ" เป็น "Bangkok", "โตเกียว" เป็น "Tokyo")
 3. "chat": คำถามหรือข้อความอื่นๆทั้งหมด คำถามกำกวม (เช่น "ที่นี่อากาศเป็นยังไง") หรือเปรียบปรยโดยไม่ต้องการข้อมูล API ข้างต้น (เช่น "วันนี้กรุงเทพอากาศดีนะ ไม่เห็นมีฝนตามพยากรณ์เลย")
 
@@ -69,7 +79,7 @@ router_system_prompt = """คุณคือตัววิเคราะห์
 - false: เมื่อผู้ใช้ต้องการทราบเพียง "ข้อมูลตัวเลข/สภาพอากาศตรงๆ" (เช่น "ราคาหุ้น AAPL เท่าไหร่", "ตอนนี้สภาพอากาศกรุงเทพเป็นยังไง")
 
 รูปแบบโครงสร้าง JSON:
-- ถ้า get_stock_price: {"action": "get_stock_price", "ticker": "สัญลักษณ์หุ้น"}
+- ถ้า get_stock_price: {"action": "get_stock_price", "tickers": ["TICKER1", "TICKER2"]}
 - ถ้า get_weather: {"action": "get_weather", "city": "ชื่อเมือง"}
 - ถ้า chat: {"action": "chat"}
 """
@@ -79,6 +89,7 @@ analyze_system_prompt = """คุณคือผู้ช่วย AI อัจ�
 จงนำข้อมูลจริงที่ได้จากระบบ API มาตอบคำถามและวิเคราะห์ต่อยอดตามที่ผู้ใช้ต้องการอย่างมีเหตุผลและเป็นธรรมชาติ
 - หากผู้ใช้ถามว่าเหมาะจะออกไปทำกิจกรรมไหม (เช่น วิ่ง, ออกกำลังกาย) ให้วิเคราะห์จากอุณหภูมิและสภาพอากาศที่ได้
 - หากผู้ใช้ถามเรื่องแนวโน้มการลงทุน ให้ระบุราคาปัจจุบันและให้คำแนะนำหลักการลงทุนเบื้องต้นแบบเป็นกลาง
+- หากผู้ใช้ถามเปรียบเทียบหุ้นหลายตัว ให้สรุปข้อมูลราคาของแต่ละตัวและวิเคราะห์เปรียบเทียบอย่างเป็นกลาง
 - หากข้อมูลจริงที่ได้จากระบบ API ตอบคำถามครบถ้วนแล้ว คุณไม่จำเป็นต้องวิเคราะห์ต่อ"""
 
 # ประวัติการสนทนา
@@ -108,10 +119,7 @@ while True:
     # ส่งคำถามให้ LLM วิเคราะห์ Intent
     res = client.chat.completions.create(
         model="openrouter/free",
-        messages=[
-            {"role": "system", "content": router_system_prompt},
-            {"role": "user", "content": user_input}
-        ],
+        messages=router_messages,
         response_format={"type": "json_object"}
     )
 
@@ -128,7 +136,8 @@ while True:
         # ตรวจสอบเงื่อนไขแล้วเรียกใช้ฟังก์ชันตามที่ LLM ระบุ
         if action in ["get_stock_price", "get_weather"]:
             if action == "get_stock_price":
-                ticker = data.get("ticker")
+                # รับค่าเป็น List จาก key "tickers"
+                ticker = data.get("tickers", [])
                 print(f"ตรวจพบ Parameter 'ticker': {ticker}")
                 api_result = get_stock_price(ticker)
             else:
