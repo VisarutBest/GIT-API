@@ -241,10 +241,10 @@ while True:
             print(f"AI: {final_reply}")
 
         params = data.get("tickers") or data.get("cities") or ""
-        api_out = combined_api_result if action in ["get_stock_price", "get_weather"] else ""
+        api_out = combined_api_result if tasks in ["get_stock_price", "get_weather"] else ""
         need_ana = data.get("need_analysis", False)
 
-        log_to_csv(user_input, action, params, need_ana, api_out, final_reply, status="SUCCESS")
+        log_to_csv(user_input, tasks, params, need_ana, api_out, final_reply, status="SUCCESS")
 
         # อัปเดตประวัติการสนทนา
         messages_history.append({"role": "user", "content": user_input})
