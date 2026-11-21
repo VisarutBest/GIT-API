@@ -4,6 +4,36 @@ import json
 from dotenv import load_dotenv
 from openai import OpenAI
 import yfinance as yf
+import csv
+from datetime import datetime
+
+CSV_FILE = "test_logs.csv"
+
+def log_to_csv(user_input, action, parameters, need_analysis, api_result, final_reply, status="SUCCESS"):
+    file_exists = os.path.isfile(CSV_FILE)
+    
+    # ใช้ encoding='utf-8-sig' เพื่อให้เปิดใน Excel แล้วภาษาไทยไม่เพี้ยน
+    with open(CSV_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        
+        # สร้าง Header อัตโนมัติถ้ายังไม่มีไฟล์
+        if not file_exists:
+            writer.writerow([
+                "Timestamp", "User_Input", "Detected_Action", 
+                "Parameters", "Need_Analysis", "API_Result", 
+                "Final_Reply", "Status"
+            ])
+            
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            user_input,
+            action,
+            json.dumps(parameters, ensure_ascii=False),
+            need_analysis,
+            api_result,
+            final_reply,
+            status
+        ])
 
 # โหลด API Key จากไฟล์ .env (หรือ key.env)
 load_dotenv("key.env")
@@ -39,49 +69,59 @@ def get_stock_price(tickers):
     return "\n".join(results)
 
 # ฟังก์ชันสำหรับดึงสภาพอากาศ
-def get_weather(city):
-    print(f"กำลังเรียกใช้ get_weather() ด้วย City: '{city}'")
-    try:
-        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=en&format=json"
-        print(f"ยิง API Geocoding ไปที่: {geo_url}")
-        geo_res = requests.get(geo_url).json()
+def get_weather(cities):
+    if isinstance(cities, str):
+        cities = [cities]
 
-        if "results" in geo_res and len(geo_res["results"]) > 0:
-            lat = geo_res["results"][0]["latitude"]
-            lon = geo_res["results"][0]["longitude"]
-            official_name = geo_res["results"][0]["name"]
-            print(f"เจอ พิกัด: ({lat}, {lon}) สำหรับ {official_name}")
+    print(f"กำลังเรียกใช้ get_weather() ด้วย Cities: {cities}")
+    results = []
 
-            weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-            weather_res = requests.get(weather_url).json()
-            temp = weather_res["current_weather"]["temperature"]
+    for city in cities:
+        try:
+            geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=en&format=json"
+            print(f"ยิง API Geocoding ไปที่: {geo_url}")
+            geo_res = requests.get(geo_url).json()
 
-            print(f"อุณหภูมิที่ได้: {temp}°C")
-            return f"อุณหภูมิปัจจุบันใน {official_name} คือ {temp}°C"
-        
-        print(f"ไม่พบผลลัพธ์เมือง {city} จาก Geocoding API")
-        return f"ไม่พบข้อมูลสภาพอากาศของเมือง {city}"
-    except Exception as e:
-        print(f"เกิด Exception ใน get_weather: {e}")
-        return f"ไม่สามารถดึงข้อมูลสภาพอากาศของ {city} ได้"
+            if "results" in geo_res and len(geo_res["results"]) > 0:
+                lat = geo_res["results"][0]["latitude"]
+                lon = geo_res["results"][0]["longitude"]
+                official_name = geo_res["results"][0]["name"]
+                print(f"เจอ พิกัด: ({lat}, {lon}) สำหรับ {official_name}")
+
+                weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+                weather_res = requests.get(weather_url).json()
+                temp = weather_res["current_weather"]["temperature"]
+
+                print(f"ดึงอุณหภูมิ {official_name} สำเร็จ: {temp}°C")
+                results.append(f"- อุณหภูมิปัจจุบันใน {official_name} คือ {temp}°C")
+            
+            else:
+                results.append(f"- ไม่พบข้อมูลสภาพอากาศของเมือง {city}")
+        except Exception as e:
+            results.append(f"- ไม่สามารถดึงข้อมูลสภาพอากาศของ {city} ได้ ({e})")
+    
+    return "\n".join(results)
 
 # Prompt ให้ LLM วิเคราะห์ Intent และตอบกลับในรูปแบบ JSON
 router_system_prompt = """คุณคือตัววิเคราะห์ความจำนงของผู้ใช้ (Intent Classifier)
 จงวิเคราะห์ข้อความของผู้ใช้ แล้วตอบกลับเป็น JSON เท่านั้น (ห้ามใส่ Markdown Codeblock)
 
-การตัดสินใจเลือก action:
+คุณสามารถเลือกเรียกใช้ได้หลาย action พร้อมกันหากผู้ใช้ถามหลายเรื่องในประโยคเดียว โดยใส่ไว้ใน list "tasks":
 1. "get_stock_price": เมื่อผู้ใช้ถามคำถามเพื่อขอทราบราคาหุ้น ตลาดหุ้นจริงๆ หรือขอคำแนะนำ/วิเคราะห์/เปรียบเทียบการลงทุนในหุ้น 1 ตัวหรือหลายตัวพร้อมกัน (ให้ดึงสัญลักษณ์ ticker ทั้งหมดใส่ใน list เช่น ["AAPL"], ["AAPL", "TSLA", "PTT.BK"])
-2. "get_weather": เมื่อผู้ใช้ถามคำถามเพื่อขอทราบอุณหภูมิ/พยากรณ์อากาศจริงๆ หรือถามคำถามที่ต้องใช้สภาพอากาศปัจจุบันประกอบการตัดสินใจ (เช่น ออกไปวิ่งได้ไหม, ต้องพกร่มไหม) โดยให้ระบุชื่อเมือง ถ้าเป็นภาษาไทยให้เปลี่ยนเป็นภาษาอังกฤษ (เช่น "กรุงเทพ" เป็น "Bangkok", "โตเกียว" เป็น "Tokyo")
-3. "chat": คำถามหรือข้อความอื่นๆทั้งหมด คำถามกำกวม (เช่น "ที่นี่อากาศเป็นยังไง") หรือเปรียบปรยโดยไม่ต้องการข้อมูล API ข้างต้น (เช่น "วันนี้กรุงเทพอากาศดีนะ ไม่เห็นมีฝนตามพยากรณ์เลย")
+2. "get_weather": เมื่อผู้ใช้ถามคำถามเพื่อขอทราบอุณหภูมิ/พยากรณ์อากาศจริงๆ หรือถามคำถามที่ต้องใช้สภาพอากาศปัจจุบันประกอบการตัดสินใจ (เช่น ออกไปวิ่งได้ไหม, ต้องพกร่มไหม) โดยให้ระบุชื่อเมือง ถ้าเป็นภาษาไทยให้เปลี่ยนเป็นภาษาอังกฤษ (เช่น "กรุงเทพ" เป็น "Bangkok", "โตเกียว" เป็น "Tokyo") แล้วดึงชื่อเมืองมาใส่ใน list (เช่น ["Bangkok", "Tokyo"])
+3. หากเป็นคำถามหรือข้อความอื่นๆทั้งหมด คำถามกำกวม (เช่น "ที่นี่อากาศเป็นยังไง") หรือเปรียบปรยโดยไม่ต้องการข้อมูล API ข้างต้น (เช่น "วันนี้กรุงเทพอากาศดีนะ ไม่เห็นมีฝนตามพยากรณ์เลย") ให้ส่ง "tasks": [] (list ว่าง)
 
 หลักการกำหนด "need_analysis" (true/false) สำหรับ get_stock_price และ get_weather:
 - true: เมื่อผู้ใช้ถามคำถามเชิงวิเคราะห์ ขอคำแนะนำ Decision-making หรือมีคำถามต่อยอด (เช่น "อากาศกรุงเทพตอนนี้เป็นยังไง ออกไปซื้อของได้ไหม", "หุ้น PTT ราคานี้ควรซื้อไหม")
 - false: เมื่อผู้ใช้ต้องการทราบเพียง "ข้อมูลตัวเลข/สภาพอากาศตรงๆ" (เช่น "ราคาหุ้น AAPL เท่าไหร่", "ตอนนี้สภาพอากาศกรุงเทพเป็นยังไง")
 
-รูปแบบโครงสร้าง JSON:
-- ถ้า get_stock_price: {"action": "get_stock_price", "tickers": ["TICKER1", "TICKER2"]}
-- ถ้า get_weather: {"action": "get_weather", "city": "ชื่อเมือง"}
-- ถ้า chat: {"action": "chat"}
+รูปแบบโครงสร้าง JSON (ต้องมี key "tasks" และ "need_analysis" เสมอ):
+- ตัวอย่างถามทั้งหุ้นและอากาศ: 
+  {"tasks": [{"action": "get_stock_price", "tickers": ["AAPL"]}, {"action": "get_weather", "cities": ["Bangkok"]}], "need_analysis": false}
+- ตัวอย่างถามอย่างเดียว: 
+  {"tasks": [{"action": "get_weather", "cities": ["Tokyo"]}], "need_analysis": true}
+- ตัวอย่างแชททั่วไป: 
+  {"tasks": [], "need_analysis": false}
 """
 
 # Prompt วิเคราะห์ข้อมูลจาก API ร่วมกับคำถามผู้ใช้
@@ -128,25 +168,33 @@ while True:
 
     try:
         data = json.loads(raw_response)
-        action = data.get("action")
-        print(f"Action ที่ถอดได้จาก JSON: '{action}'")
+        tasks = data.get("tasks", [])
+        need_analysis = data.get("need_analysis", False)
+        print(f"Tasks ที่ถอดได้จาก JSON: '{tasks}'")
 
         final_reply = ""
+    
+        # ถ้ามีรายการใน tasks ให้วนลูปรันทุกฟังก์ชันที่ถูกเรียก
+        if tasks:
+            api_results = []
+            
+            for task in tasks:
+                action = task.get("action")
+                if action == "get_stock_price":
+                    tickers = task.get("tickers", [])
+                    print(f"ตรวจพบ Parameter 'ticker': {tickers}")
+                    if tickers:
+                        api_results.append(get_stock_price(tickers))
+                        
+                elif action == "get_weather":
+                    # รองรับทั้ง key "cities" (ใหม่) และ "city" (เผื่อ LLM หลุดส่งแบบเก่า)
+                    cities = task.get("cities") or task.get("city")
+                    print(f"ตรวจพบ Parameter 'city': {cities}")
+                    if cities:
+                        api_results.append(get_weather(cities))
 
-        # ตรวจสอบเงื่อนไขแล้วเรียกใช้ฟังก์ชันตามที่ LLM ระบุ
-        if action in ["get_stock_price", "get_weather"]:
-            if action == "get_stock_price":
-                # รับค่าเป็น List จาก key "tickers"
-                ticker = data.get("tickers", [])
-                print(f"ตรวจพบ Parameter 'ticker': {ticker}")
-                api_result = get_stock_price(ticker)
-            else:
-                city = data.get("city")
-                print(f"ตรวจพบ Parameter 'city': {city}")
-                api_result = get_weather(city)
-
-            # ตรวจสอบว่าผู้ใช้ต้องการการวิเคราะห์ต่อยอดหรือไม่
-            need_analysis = data.get("need_analysis", False)
+            # รวมผลลัพธ์จากทุก API เข้าด้วยกัน
+            combined_api_result = "\n".join(api_results)
 
             # ตรวจสอบว่าต้องส่งเข้า analyze_system_prompt หรือไม่
             if need_analysis:
@@ -157,7 +205,7 @@ while True:
                     analysis_messages = (
                         [{"role": "system", "content": analyze_system_prompt}]
                         + messages_history[-MAX_HISTORY:]
-                        + [{"role": "user", "content": f"คำถามผู้ใช้: {user_input}\nข้อมูลจริงจาก API: {api_result}"}]
+                        + [{"role": "user", "content": f"คำถามผู้ใช้: {user_input}\nข้อมูลจริงจาก API: {combined_api_result}"}]
                     )
                     analyze_res = client.chat.completions.create(
                         model="openrouter/free",
@@ -168,14 +216,15 @@ while True:
                     print(f"AI: {final_reply}")
                 except Exception as e:
                     print(f"ไม่สามารถวิเคราะห์ต่อยอดได้เนื่องจาก: {e}")
-                    final_reply = api_result
-                    print(f"AI (ข้อมูลสำรอง): {api_result}")
+                    final_reply = combined_api_result
+                    print(f"AI (ข้อมูลสำรอง): {combined_api_result}")
             else:
                 # กรณีแค่ต้องการข้อมูลดิบตรงๆ -> พิมพ์ผลลัพธ์ API ได้เลยโดยข้าม analyze_system_prompt
                 print("คำถามต้องการแค่ข้อมูลตรงๆ -> ข้ามการวิเคราะห์")
-                final_reply = api_result
-                print(f"AI: {api_result}")
+                final_reply = combined_api_result
+                print(f"AI: {combined_api_result}")
 
+        # กรณี tasks ว่าง ([]) ให้ตอบแชททั่วไป
         else:
             # กรณี action == "chat" หรือ action อื่นๆ ให้ส่งหา LLM เพื่อแชทสนทนาตามปกติ
             print("ไม่ได้เรียกใช้ API -> ส่งตอบแชททั่วไป")
@@ -191,6 +240,12 @@ while True:
             final_reply = chat_res.choices[0].message.content
             print(f"AI: {final_reply}")
 
+        params = data.get("tickers") or data.get("cities") or ""
+        api_out = combined_api_result if action in ["get_stock_price", "get_weather"] else ""
+        need_ana = data.get("need_analysis", False)
+
+        log_to_csv(user_input, action, params, need_ana, api_out, final_reply, status="SUCCESS")
+
         # อัปเดตประวัติการสนทนา
         messages_history.append({"role": "user", "content": user_input})
         messages_history.append({"role": "assistant", "content": final_reply})
@@ -198,3 +253,4 @@ while True:
     except json.JSONDecodeError as e:
         print(f"JSONDecodeError: อ่าน JSON ไม่สำเร็จ - {e}")
         print("AI: เกิดข้อผิดพลาดในการอ่านข้อมูลจาก LLM")
+        log_to_csv(user_input, "ERROR", "", False, "", raw_response, status="JSON_ERROR")
