@@ -1,3 +1,4 @@
 /key.env
 /test.gitignore
 *.csv
+__pycache__/

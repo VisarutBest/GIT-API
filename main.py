@@ -136,121 +136,122 @@ analyze_system_prompt = """คุณคือผู้ช่วย AI อัจ�
 messages_history = []
 MAX_HISTORY = 10  # เก็บย้อนหลังสูงสุด 10 ข้อความ (5 คู่ สนทนา) เพื่อควบคุม Token
 
-while True:
-    user_input = input("User: ")
+if __name__ == "__main__":
+    while True:
+        user_input = input("User: ")
 
-    if user_input.strip().lower() in ["exit", "quit", "ออก"]:
-        print("Exit")
-        break
+        if user_input.strip().lower() in ["exit", "quit", "ออก"]:
+            print("Exit")
+            break
 
-    if user_input.strip().lower() in ["clear", "clear history", "ล้างประวัติ"]:
-        messages_history.clear()
-        print("ระบบ: ล้างประวัติการสนทนาเรียบร้อยแล้ว")
-        continue
+        if user_input.strip().lower() in ["clear", "clear history", "ล้างประวัติ"]:
+            messages_history.clear()
+            print("ระบบ: ล้างประวัติการสนทนาเรียบร้อยแล้ว")
+            continue
 
-    if not user_input.strip():
-        continue
+        if not user_input.strip():
+            continue
 
-    print(f"กำลังส่งคำถามไปยัง LLM เพื่อวิเคราะห์")
+        print(f"กำลังส่งคำถามไปยัง LLM เพื่อวิเคราะห์")
 
-    # รวม System Prompt + ประวัติการสนทนา + ข้อความปัจจุบันส่งไปวิเคราะห์ Intent
-    router_messages = [{"role": "system", "content": router_system_prompt}] + messages_history[-MAX_HISTORY:] + [{"role": "user", "content": user_input}]
+        # รวม System Prompt + ประวัติการสนทนา + ข้อความปัจจุบันส่งไปวิเคราะห์ Intent
+        router_messages = [{"role": "system", "content": router_system_prompt}] + messages_history[-MAX_HISTORY:] + [{"role": "user", "content": user_input}]
 
-    # ส่งคำถามให้ LLM วิเคราะห์ Intent
-    res = client.chat.completions.create(
-        model="openrouter/free",
-        messages=router_messages,
-        response_format={"type": "json_object"}
-    )
+        # ส่งคำถามให้ LLM วิเคราะห์ Intent
+        res = client.chat.completions.create(
+            model="openrouter/free",
+            messages=router_messages,
+            response_format={"type": "json_object"}
+        )
 
-    raw_response = res.choices[0].message.content
-    print(f"Raw Response จาก LLM:\n{raw_response}")
+        raw_response = res.choices[0].message.content
+        print(f"Raw Response จาก LLM:\n{raw_response}")
 
-    try:
-        data = json.loads(raw_response)
-        tasks = data.get("tasks", [])
-        need_analysis = data.get("need_analysis", False)
-        print(f"Tasks ที่ถอดได้จาก JSON: '{tasks}'")
+        try:
+            data = json.loads(raw_response)
+            tasks = data.get("tasks", [])
+            need_analysis = data.get("need_analysis", False)
+            print(f"Tasks ที่ถอดได้จาก JSON: '{tasks}'")
 
-        final_reply = ""
-    
-        # ถ้ามีรายการใน tasks ให้วนลูปรันทุกฟังก์ชันที่ถูกเรียก
-        if tasks:
-            api_results = []
-            
-            for task in tasks:
-                action = task.get("action")
-                if action == "get_stock_price":
-                    tickers = task.get("tickers", [])
-                    print(f"ตรวจพบ Parameter 'ticker': {tickers}")
-                    if tickers:
-                        api_results.append(get_stock_price(tickers))
-                        
-                elif action == "get_weather":
-                    # รองรับทั้ง key "cities" (ใหม่) และ "city" (เผื่อ LLM หลุดส่งแบบเก่า)
-                    cities = task.get("cities") or task.get("city")
-                    print(f"ตรวจพบ Parameter 'city': {cities}")
-                    if cities:
-                        api_results.append(get_weather(cities))
+            final_reply = ""
+        
+            # ถ้ามีรายการใน tasks ให้วนลูปรันทุกฟังก์ชันที่ถูกเรียก
+            if tasks:
+                api_results = []
+                
+                for task in tasks:
+                    action = task.get("action")
+                    if action == "get_stock_price":
+                        tickers = task.get("tickers", [])
+                        print(f"ตรวจพบ Parameter 'ticker': {tickers}")
+                        if tickers:
+                            api_results.append(get_stock_price(tickers))
+                            
+                    elif action == "get_weather":
+                        # รองรับทั้ง key "cities" (ใหม่) และ "city" (เผื่อ LLM หลุดส่งแบบเก่า)
+                        cities = task.get("cities") or task.get("city")
+                        print(f"ตรวจพบ Parameter 'city': {cities}")
+                        if cities:
+                            api_results.append(get_weather(cities))
 
-            # รวมผลลัพธ์จากทุก API เข้าด้วยกัน
-            combined_api_result = "\n".join(api_results)
+                # รวมผลลัพธ์จากทุก API เข้าด้วยกัน
+                combined_api_result = "\n".join(api_results)
 
-            # ตรวจสอบว่าต้องส่งเข้า analyze_system_prompt หรือไม่
-            if need_analysis:
-                # กรณีต้องการคำแนะนำ/วิเคราะห์ต่อยอด -> ส่งหา LLM ร่วมกับ analyze_system_prompt
-                print("คำถามต้องการการวิเคราะห์ต่อยอด -> กำลังส่งให้ LLM ประมวลผล")
-                try:
-                    # ส่งประวัติแชทร่วมกับการวิเคราะห์ข้อมูล API
-                    analysis_messages = (
-                        [{"role": "system", "content": analyze_system_prompt}]
-                        + messages_history[-MAX_HISTORY:]
-                        + [{"role": "user", "content": f"คำถามผู้ใช้: {user_input}\nข้อมูลจริงจาก API: {combined_api_result}"}]
-                    )
-                    analyze_res = client.chat.completions.create(
-                        model="openrouter/free",
-                        messages=analysis_messages,
-                        timeout=15
-                    )
-                    final_reply = analyze_res.choices[0].message.content
-                    print(f"AI: {final_reply}")
-                except Exception as e:
-                    print(f"ไม่สามารถวิเคราะห์ต่อยอดได้เนื่องจาก: {e}")
+                # ตรวจสอบว่าต้องส่งเข้า analyze_system_prompt หรือไม่
+                if need_analysis:
+                    # กรณีต้องการคำแนะนำ/วิเคราะห์ต่อยอด -> ส่งหา LLM ร่วมกับ analyze_system_prompt
+                    print("คำถามต้องการการวิเคราะห์ต่อยอด -> กำลังส่งให้ LLM ประมวลผล")
+                    try:
+                        # ส่งประวัติแชทร่วมกับการวิเคราะห์ข้อมูล API
+                        analysis_messages = (
+                            [{"role": "system", "content": analyze_system_prompt}]
+                            + messages_history[-MAX_HISTORY:]
+                            + [{"role": "user", "content": f"คำถามผู้ใช้: {user_input}\nข้อมูลจริงจาก API: {combined_api_result}"}]
+                        )
+                        analyze_res = client.chat.completions.create(
+                            model="openrouter/free",
+                            messages=analysis_messages,
+                            timeout=15
+                        )
+                        final_reply = analyze_res.choices[0].message.content
+                        print(f"AI: {final_reply}")
+                    except Exception as e:
+                        print(f"ไม่สามารถวิเคราะห์ต่อยอดได้เนื่องจาก: {e}")
+                        final_reply = combined_api_result
+                        print(f"AI (ข้อมูลสำรอง): {combined_api_result}")
+                else:
+                    # กรณีแค่ต้องการข้อมูลดิบตรงๆ -> พิมพ์ผลลัพธ์ API ได้เลยโดยข้าม analyze_system_prompt
+                    print("คำถามต้องการแค่ข้อมูลตรงๆ -> ข้ามการวิเคราะห์")
                     final_reply = combined_api_result
-                    print(f"AI (ข้อมูลสำรอง): {combined_api_result}")
+                    print(f"AI: {combined_api_result}")
+
+            # กรณี tasks ว่าง ([]) ให้ตอบแชททั่วไป
             else:
-                # กรณีแค่ต้องการข้อมูลดิบตรงๆ -> พิมพ์ผลลัพธ์ API ได้เลยโดยข้าม analyze_system_prompt
-                print("คำถามต้องการแค่ข้อมูลตรงๆ -> ข้ามการวิเคราะห์")
-                final_reply = combined_api_result
-                print(f"AI: {combined_api_result}")
+                # กรณี action == "chat" หรือ action อื่นๆ ให้ส่งหา LLM เพื่อแชทสนทนาตามปกติ
+                print("ไม่ได้เรียกใช้ API -> ส่งตอบแชททั่วไป")
+                chat_messages = (
+                    [{"role": "system", "content": "คุณคือผู้ช่วย AI อัจฉริยะ ตอบคำถามผู้ใช้อย่างสุภาพและเป็นธรรมชาติ"}]
+                    + messages_history[-MAX_HISTORY:]
+                    + [{"role": "user", "content": user_input}]
+                )
+                chat_res = client.chat.completions.create(
+                    model="openrouter/free",
+                    messages=chat_messages
+                )
+                final_reply = chat_res.choices[0].message.content
+                print(f"AI: {final_reply}")
 
-        # กรณี tasks ว่าง ([]) ให้ตอบแชททั่วไป
-        else:
-            # กรณี action == "chat" หรือ action อื่นๆ ให้ส่งหา LLM เพื่อแชทสนทนาตามปกติ
-            print("ไม่ได้เรียกใช้ API -> ส่งตอบแชททั่วไป")
-            chat_messages = (
-                [{"role": "system", "content": "คุณคือผู้ช่วย AI อัจฉริยะ ตอบคำถามผู้ใช้อย่างสุภาพและเป็นธรรมชาติ"}]
-                + messages_history[-MAX_HISTORY:]
-                + [{"role": "user", "content": user_input}]
-            )
-            chat_res = client.chat.completions.create(
-                model="openrouter/free",
-                messages=chat_messages
-            )
-            final_reply = chat_res.choices[0].message.content
-            print(f"AI: {final_reply}")
+            params = data.get("tickers") or data.get("cities") or ""
+            api_out = combined_api_result if tasks in ["get_stock_price", "get_weather"] else ""
+            need_ana = data.get("need_analysis", False)
 
-        params = data.get("tickers") or data.get("cities") or ""
-        api_out = combined_api_result if tasks in ["get_stock_price", "get_weather"] else ""
-        need_ana = data.get("need_analysis", False)
+            log_to_csv(user_input, tasks, params, need_ana, api_out, final_reply, status="SUCCESS")
 
-        log_to_csv(user_input, tasks, params, need_ana, api_out, final_reply, status="SUCCESS")
+            # อัปเดตประวัติการสนทนา
+            messages_history.append({"role": "user", "content": user_input})
+            messages_history.append({"role": "assistant", "content": final_reply})
 
-        # อัปเดตประวัติการสนทนา
-        messages_history.append({"role": "user", "content": user_input})
-        messages_history.append({"role": "assistant", "content": final_reply})
-
-    except json.JSONDecodeError as e:
-        print(f"JSONDecodeError: อ่าน JSON ไม่สำเร็จ - {e}")
-        print("AI: เกิดข้อผิดพลาดในการอ่านข้อมูลจาก LLM")
-        log_to_csv(user_input, "ERROR", "", False, "", raw_response, status="JSON_ERROR")
+        except json.JSONDecodeError as e:
+            print(f"JSONDecodeError: อ่าน JSON ไม่สำเร็จ - {e}")
+            print("AI: เกิดข้อผิดพลาดในการอ่านข้อมูลจาก LLM")
+            log_to_csv(user_input, "ERROR", "", False, "", raw_response, status="JSON_ERROR")
