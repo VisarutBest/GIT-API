@@ -9,8 +9,11 @@ from datetime import datetime
 
 CSV_FILE = "test_logs.csv"
 
-def log_to_csv(user_input, action, parameters, need_analysis, api_result, final_reply, status="SUCCESS"):
+def log_to_csv(user_input, reasoning, action, need_analysis, api_result, final_reply, status="SUCCESS"):
     file_exists = os.path.isfile(CSV_FILE)
+    
+    # แปลง action (list/dict) เป็น JSON string เพื่อให้อ่านง่ายใน CSV
+    action_str = json.dumps(action, ensure_ascii=False) if isinstance(action, (list, dict)) else str(action)
     
     # ใช้ encoding='utf-8-sig' เพื่อให้เปิดใน Excel แล้วภาษาไทยไม่เพี้ยน
     with open(CSV_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
@@ -19,16 +22,16 @@ def log_to_csv(user_input, action, parameters, need_analysis, api_result, final_
         # สร้าง Header อัตโนมัติถ้ายังไม่มีไฟล์
         if not file_exists:
             writer.writerow([
-                "Timestamp", "User_Input", "Detected_Action", 
-                "Parameters", "Need_Analysis", "API_Result", 
+                "Timestamp", "User_Input", "Reasoning", 
+                "Detected_Action", "Need_Analysis", "API_Result", 
                 "Final_Reply", "Status"
             ])
             
         writer.writerow([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             user_input,
-            action,
-            json.dumps(parameters, ensure_ascii=False),
+            reasoning,
+            action_str,
             need_analysis,
             api_result,
             final_reply,
@@ -164,16 +167,22 @@ if __name__ == "__main__":
             response_format={"type": "json_object"}
         )
 
-        raw_response = res.choices[0].message.content
+        message_obj = res.choices[0].message
+        raw_response = message_obj.content
+        native_reasoning = getattr(message_obj, "reasoning", None) or ""
         print(f"Raw Response จาก LLM:\n{raw_response}")
 
         try:
             data = json.loads(raw_response)
+            reasoning = data.get("reasoning") or native_reasoning or "ไม่ได้ระบุเหตุผล"
             tasks = data.get("tasks", [])
             need_analysis = data.get("need_analysis", False)
+            
+            # print(f"Reasoning: {reasoning}")
             print(f"Tasks ที่ถอดได้จาก JSON: '{tasks}'")
 
             final_reply = ""
+            combined_api_result = ""
         
             # ถ้ามีรายการใน tasks ให้วนลูปรันทุกฟังก์ชันที่ถูกเรียก
             if tasks:
@@ -241,11 +250,7 @@ if __name__ == "__main__":
                 final_reply = chat_res.choices[0].message.content
                 print(f"AI: {final_reply}")
 
-            params = data.get("tickers") or data.get("cities") or ""
-            api_out = combined_api_result if tasks in ["get_stock_price", "get_weather"] else ""
-            need_ana = data.get("need_analysis", False)
-
-            log_to_csv(user_input, tasks, params, need_ana, api_out, final_reply, status="SUCCESS")
+            log_to_csv(user_input, reasoning, tasks, need_analysis, combined_api_result, final_reply, status="SUCCESS")
 
             # อัปเดตประวัติการสนทนา
             messages_history.append({"role": "user", "content": user_input})
@@ -254,4 +259,4 @@ if __name__ == "__main__":
         except json.JSONDecodeError as e:
             print(f"JSONDecodeError: อ่าน JSON ไม่สำเร็จ - {e}")
             print("AI: เกิดข้อผิดพลาดในการอ่านข้อมูลจาก LLM")
-            log_to_csv(user_input, "ERROR", "", False, "", raw_response, status="JSON_ERROR")
+            log_to_csv(user_input, f"JSONDecodeError: {e}", [], False, "", raw_response, status="JSON_ERROR")
