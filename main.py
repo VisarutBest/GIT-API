@@ -87,6 +87,38 @@ def get_stock_price(tickers):
             
     return "\n".join(results)
 
+# ตารางแปลงรหัสสภาพอากาศมาตรฐาน WMO จาก Open-Meteo เป็นภาษาไทย
+WMO_WEATHER_CODES = {
+    0: "ท้องฟ้าแจ่มใส",
+    1: "ท้องฟ้าโปร่งเป็นส่วนใหญ่",
+    2: "มีเมฆบางส่วน",
+    3: "มีเมฆมาก / ครึ้ม",
+    45: "มีหมอก",
+    48: "มีหมอกลงจัด",
+    51: "ฝนปรอยๆ เล็กน้อย",
+    53: "ฝนปรอยๆ ปานกลาง",
+    55: "ฝนปรอยๆ หนาแน่น",
+    56: "ฝนเยือกแข็งปรอยๆ",
+    57: "ฝนเยือกแข็งปรอยๆ หนาแน่น",
+    61: "ฝนตกเล็กน้อย",
+    63: "ฝนตกปานกลาง",
+    65: "ฝนตกหนัก",
+    66: "ฝนเยือกแข็งเล็กน้อย",
+    67: "ฝนเยือกแข็งหนัก",
+    71: "หิมะตกเล็กน้อย",
+    73: "หิมะตกปานกลาง",
+    75: "หิมะตกหนัก",
+    77: "เกล็ดหิมะ",
+    80: "ฝนตกเป็นช่วงๆ เล็กน้อย",
+    81: "ฝนตกเป็นช่วงๆ ปานกลาง",
+    82: "ฝนตกหนักเป็นช่วงๆ",
+    85: "หิมะตกเป็นช่วงๆ เล็กน้อย",
+    86: "หิมะตกหนักเป็นช่วงๆ",
+    95: "พายุฝนฟ้าคะนอง",
+    96: "พายุฝนฟ้าคะนองพร้อมลูกเห็บเล็กน้อย",
+    99: "พายุฝนฟ้าคะนองพร้อมลูกเห็บหนัก"
+}
+
 # ฟังก์ชันสำหรับดึงสภาพอากาศ
 def get_weather(cities):
     if isinstance(cities, str):
@@ -99,21 +131,50 @@ def get_weather(cities):
         try:
             geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=en&format=json"
             print(f"ยิง API Geocoding ไปที่: {geo_url}")
-            geo_res = requests.get(geo_url).json()
+            geo_res = requests.get(geo_url, timeout=10).json()
 
             if "results" in geo_res and len(geo_res["results"]) > 0:
                 lat = geo_res["results"][0]["latitude"]
                 lon = geo_res["results"][0]["longitude"]
                 official_name = geo_res["results"][0]["name"]
-                print(f"เจอ พิกัด: ({lat}, {lon}) สำหรับ {official_name}")
+                country = geo_res["results"][0].get("country", "")
+                print(f"เจอพิกัด: ({lat}, {lon}) สำหรับ {official_name}, {country}")
 
-                weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-                weather_res = requests.get(weather_url).json()
-                temp = weather_res["current_weather"]["temperature"]
+                # ขอข้อมูล current และ daily 1 วันตาม timezone ของเมืองนั้น
+                weather_url = (
+                    f"https://api.open-meteo.com/v1/forecast"
+                    f"?latitude={lat}&longitude={lon}"
+                    f"&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m"
+                    f"&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+                    f"&timezone=auto&forecast_days=1"
+                )
+                weather_res = requests.get(weather_url, timeout=10).json()
 
-                print(f"ดึงอุณหภูมิ {official_name} สำเร็จ: {temp}°C")
-                results.append(f"- อุณหภูมิปัจจุบันใน {official_name} คือ {temp}°C")
-            
+                current = weather_res.get("current", {})
+                daily = weather_res.get("daily", {})
+
+                temp = current.get("temperature_2m")
+                feels_like = current.get("apparent_temperature")
+                humidity = current.get("relative_humidity_2m")
+                precip = current.get("precipitation")
+                wind = current.get("wind_speed_10m")
+                w_code = current.get("weather_code")
+                weather_desc = WMO_WEATHER_CODES.get(w_code, f"รหัสสภาพอากาศ {w_code}")
+
+                temp_max = daily.get("temperature_2m_max", [None])[0]
+                temp_min = daily.get("temperature_2m_min", [None])[0]
+                rain_prob = daily.get("precipitation_probability_max", [None])[0]
+                rain_prob_text = f"{rain_prob}%" if rain_prob is not None else "ไม่มีข้อมูล"
+
+                print(f"ดึงข้อมูลอากาศ {official_name} สำเร็จ")
+                location_label = f"{official_name} ({country})" if country else official_name
+
+                results.append(
+                    f"- สภาพอากาศ {location_label}: {weather_desc}\n"
+                    f"  • อุณหภูมิปัจจุบัน: {temp}°C (รู้สึกเหมือน {feels_like}°C) | สูงสุด/ต่ำสุดวันนี้: {temp_max}°C / {temp_min}°C\n"
+                    f"  • ความชื้นสัมพัทธ์: {humidity}% | ความเร็วลม: {wind} กม./ชม.\n"
+                    f"  • ปริมาณฝนปัจจุบัน: {precip} มม. | โอกาสเกิดฝนสูงสุดวันนี้: {rain_prob_text}"
+                )
             else:
                 results.append(f"- ไม่พบข้อมูลสภาพอากาศของเมือง {city}")
         except Exception as e:
